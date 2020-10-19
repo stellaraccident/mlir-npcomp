@@ -36,6 +36,8 @@ public:
                  std::unique_ptr<FuncBuilder> funcBuilder)
       : typeMapper(typeMapper), funcBuilder(std::move(funcBuilder)) {}
 
+  at::Tensor importTensor(at::Tensor tensor);
+
   // Enter and exit the context manager.
   pybind11::object contextEnter();
   void contextExit(pybind11::object exc_type, pybind11::object exc_val,
@@ -72,7 +74,8 @@ private:
     // The RAII dispatch key guard is not movable, so heap allocate it. This is
     // a bit outside of its intended design, but since this is thread local as
     // well, it should be fine.
-    std::unique_ptr<c10::impl::IncludeDispatchKeyGuard> dispatchGuard;
+    std::unique_ptr<c10::impl::IncludeDispatchKeyGuard> includeGuard;
+    std::unique_ptr<c10::impl::ExcludeDispatchKeyGuard> excludeGuard;
   };
   // Gets the thread local stack of active acap controllers.
   static std::list<Activation> &getThreadLocalActiveStack();

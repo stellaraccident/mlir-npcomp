@@ -34,9 +34,22 @@ using c10::Stack;
 // TODO: Ask the PT devs why conv is special and only shows up if dispatching
 // through the autograd keys.
 // https://github.com/llvm/mlir-npcomp/issues/86
-// #define ACAP_DISPATCH_KEY AutogradPrivateUse3
-#define ACAP_DISPATCH_KEY PrivateUse3
+//#define ACAP_DISPATCH_KEY AutogradPrivateUse3
+#define ACAP_DISPATCH_KEY PrivateUse2
+#define ACAP_GRAD_DISPATCH_KEY AutogradPrivateUse2
+//#define ACAP_DISPATCH_KEY AutogradPrivateUse1
 static c10::DispatchKey kAcapDispatchKey = c10::DispatchKey::ACAP_DISPATCH_KEY;
+static c10::DispatchKey kAcapGradDispatchKey =
+    c10::DispatchKey::ACAP_GRAD_DISPATCH_KEY;
+
+at::Tensor AcapController::importTensor(at::Tensor tensor) {
+  // TODO: Move the tensor to the CPU.
+  auto impl = c10::make_intrusive<at::TensorImpl>(
+      kAcapDispatchKey, tensor.dtype(), tensor.device());
+  impl->set_sizes_and_strides(tensor.sizes(), tensor.strides());
+  impl->ShareData(*tensor.unsafeGetTensorImpl());
+  return at::Tensor(std::move(impl));
+}
 
 std::list<AcapController::Activation> &
 AcapController::getThreadLocalActiveStack() {
@@ -48,8 +61,11 @@ py::object AcapController::contextEnter() {
   auto &stack = getThreadLocalActiveStack();
   stack.emplace_front(shared_from_this());
   Activation &current = stack.front();
-  current.dispatchGuard =
-      std::make_unique<c10::impl::IncludeDispatchKeyGuard>(kAcapDispatchKey);
+  c10::DispatchKeySet keySet{kAcapDispatchKey, kAcapGradDispatchKey};
+  current.includeGuard =
+      std::make_unique<c10::impl::IncludeDispatchKeyGuard>(keySet);
+  // current.excludeGuard =
+  //     std::make_unique<c10::impl::ExcludeDispatchKeyGuard>(c10::DispatchKey::AutogradCPU);
   return py::cast(this);
 }
 
@@ -142,6 +158,7 @@ void AcapController::redispatch(const c10::OperatorHandle &opHandle,
 
 void AcapController::fallbackKernelImpl(const OperatorHandle &opHandle,
                                         Stack *stack) {
+  fprintf(stderr, "ACAP HANDLE: %s\n", opHandle.schema().name().c_str());
   verifyHasNotReturned();
   // Exclude recursive dispatch to this kernel.
   c10::impl::ExcludeDispatchKeyGuard exclusion(kAcapDispatchKey);
@@ -376,7 +393,45 @@ TORCH_LIBRARY_IMPL(_, ACAP_DISPATCH_KEY, m) {
              &AcapController::fallbackKernel>());
 }
 
+using at::IntArrayRef;
+using at::Tensor;
+static Tensor
+overridableConvolution(const Tensor &input,               // Vulkan
+                       const Tensor &weight,              // CPU
+                       const c10::optional<Tensor> &bias, // CPU
+                       const IntArrayRef stride, const IntArrayRef padding,
+                       const IntArrayRef dilation, const bool transposed,
+                       const IntArrayRef output_padding, const int64_t groups) {
+  assert(false);
+}
+
+static Tensor mkldnnConvolution(const Tensor &input,               // Vulkan
+                                const Tensor &weight,              // CPU
+                                const c10::optional<Tensor> &bias, // CPU
+                                const IntArrayRef stride,
+                                const IntArrayRef padding,
+                                const IntArrayRef dilation,
+                                const int64_t groups) {
+  assert(false);
+}
+
+static void fallthroughAutogradOther(const OperatorHandle &opHandle, Stack *stack) {
+  //
+  c10::impl::ExcludeDispatchKeyGuard exclusion1(kAcapGradDispatchKey);
+  c10::impl::ExcludeDispatchKeyGuard exclusion2(c10::DispatchKey::AutogradCPU);
+  auto &dispatcher = c10::Dispatcher::singleton();
+  dispatcher.callBoxed(opHandle, stack);
+}
+
 TORCH_LIBRARY_IMPL(aten, ACAP_DISPATCH_KEY, m) {
-  m.impl("conv2d", torch::CppFunction::makeFromBoxedFunction<
-                       &AcapController::fallbackKernel>());
+  // m.impl_UNBOXED("convolution_overrideable", overridableConvolution);
+  m.impl_UNBOXED("convolution", overridableConvolution);
+  // m.impl_UNBOXED("mkldnn_convolution", mkldnnConvolution);
+}
+
+TORCH_LIBRARY_IMPL(_, ACAP_GRAD_DISPATCH_KEY, m) {
+  // Need to mask out the AutogradCPU.
+  //m.fallback(torch::CppFunction::makeFallthrough());
+  m.fallback(torch::CppFunction::makeFromBoxedFunction<
+             &fallthroughAutogradOther>());
 }

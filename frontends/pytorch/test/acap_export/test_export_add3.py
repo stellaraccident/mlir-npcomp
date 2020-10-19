@@ -13,6 +13,10 @@ t2 = torch.randn((1,2,3,4))
 
 mb = torch_mlir.ModuleBuilder()
 with mb.capture_function("add3", [t0, t1, t2]) as f:
+  print("In capture...")
+  # t0 = f.import_tensor(t0)
+  # t1 = f.import_tensor(t1)
+  # t2 = f.import_tensor(t2)
   t3 = t0 + t1 + t2
   f.returns([t3])
 

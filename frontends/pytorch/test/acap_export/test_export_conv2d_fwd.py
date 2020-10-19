@@ -29,6 +29,7 @@ loss = torch.nn.NLLLoss()
 tensor = torch.randn(N, Cin, h, w)
 
 with mb.capture_function("conv2d_fwd", [tensor]) as f:
+  #tensor = f.import_tensor(tensor)
   result = model(tensor)
   f.returns([result])
 

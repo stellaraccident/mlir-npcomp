@@ -131,7 +131,8 @@ void InitModuleBindings(py::module &m) {
       .def("__enter__", &AcapController::contextEnter)
       .def("__exit__", &AcapController::contextExit)
       .def("returns", &AcapController::returns)
-      .def("get_debug_log", &AcapController::getDebugLog);
+      .def("get_debug_log", &AcapController::getDebugLog)
+      .def("import_tensor", &AcapController::importTensor);
   m.def("get_registered_ops", &GetRegisteredOps, kGetRegisteredOpsDocstring);
 
   ModuleBuilder::bind(m);
